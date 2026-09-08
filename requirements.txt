@@ -1,0 +1,12 @@
+# Phase 1 (M1) — Height Prior Network
+# CPU wheels work on this machine; swap torch for a CUDA build on Colab/Kaggle.
+torch>=2.4
+torchvision
+transformers>=4.44.0
+pillow
+numpy
+matplotlib
+scipy
+tqdm
+safetensors
+huggingface_hub
