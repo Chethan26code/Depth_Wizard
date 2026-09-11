@@ -1,9 +1,10 @@
-outputs/
-__pycache__/
+**/venv/
+**/__pycache__/
 *.pyc
-.venv/
+**/data/
+**/outputs/
 *.pt
 *.onnx
-.cache/
-data/raw/
-.huggingface/
+**/.cache/
+**/.huggingface/
+.DS_Store
