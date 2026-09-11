@@ -7,4 +7,6 @@
 *.onnx
 **/.cache/
 **/.huggingface/
+**/.venv/
+**/uploads/
 .DS_Store
