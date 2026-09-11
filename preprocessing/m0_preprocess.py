@@ -1,9 +1,9 @@
 """
-M0 - Preprocessing
+M0: Preprocessing
 Takes a raw image (GeoTIFF or PNG/JPG) - either a file path (local
-testing) or raw bytes (from Maansi's app upload) - detects type,
+testing) or raw bytes (from app upload) - detects type,
 reprojects to metric UTM if needed, normalizes pixel values, builds a
-valid-data mask, and returns everything Chethan needs to run depth
+valid-data mask, and returns everything processing needs to run depth
 estimation. No tiling, no file writes required for the app path.
 """
 
@@ -66,7 +66,7 @@ def _is_geotiff(filename: str, has_crs_check) -> bool:
 
 
 def _process_geotiff(open_dataset):
-    """open_dataset is a context manager yielding a rasterio dataset - works
+    """open_dataset is a context manager yielding a rasterio dataset. works
     the same whether it came from a file path or an in-memory upload."""
     with open_dataset() as src:
         nodata_value = src.nodata
@@ -147,7 +147,7 @@ def _process_plain_image(pil_image: Image.Image):
     return array, valid_mask, meta
 
 
-# ---------- Main entry point: use this from Maansi's app ----------
+# ---------- Main entry point: use this from app ----------
 
 def preprocess_image(file_bytes: bytes, filename: str) -> tuple[np.ndarray, np.ndarray, dict]:
     """
@@ -191,7 +191,7 @@ def preprocess_image(file_bytes: bytes, filename: str) -> tuple[np.ndarray, np.n
     return array, valid_mask, meta
 
 
-# ---------- Local testing helpers (file-based, for you to run/debug) ----------
+# ---------- Local testing helpers (file-based, to run/debug) ----------
 
 def preprocess_from_path(input_path: str, output_dir: str = None):
     """
@@ -229,9 +229,9 @@ def preprocess_from_path(input_path: str, output_dir: str = None):
 
 
 if __name__ == "__main__":
-    # Paths are relative to THIS script's location, not wherever you run it from
+    # Paths are relative to THIS script's location, not wherever it runs from
     SCRIPT_DIR = Path(__file__).resolve().parent
-    PROJECT_ROOT = SCRIPT_DIR.parent  # adjust if your folder depth differs
+    PROJECT_ROOT = SCRIPT_DIR.parent  # adjust if folder depth differs
 
     preprocess_from_path(
         PROJECT_ROOT / "data" / "raw" / "TEST1US" / "test_area.tif",
