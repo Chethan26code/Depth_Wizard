@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DepthWizard — Interactive Terrain Viewer</title>
+<style>
+  :root{
+    --bg:#0a141d; --panel:#101e2a; --panel2:#162836; --line:#24405a;
+    --ink:#dce9f2; --mute:#7f97a9; --accent:#ff8a3d; --accent2:#3fa9e0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;color:var(--ink)}
+  button,input,select{font:inherit}
+
+  #app{display:grid;grid-template-rows:46px 1fr 26px;grid-template-columns:296px 1fr;height:100%}
+  #top{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:0 14px;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  #brand{font-weight:700;letter-spacing:.06em;font-size:15px}
+  #brand span{color:var(--accent)}
+  #sub{color:var(--mute);font-size:12px;letter-spacing:.04em}
+  #modes{margin-left:auto;display:flex;gap:6px}
+  .mbtn{padding:5px 14px;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:4px;cursor:pointer}
+  .mbtn.on{background:var(--accent2);border-color:var(--accent2);color:#04202f;font-weight:600}
+
+  #side{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:14px}
+  .grp{margin-bottom:20px}
+  .grp h3{margin:0 0 9px;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--mute);font-weight:700}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+  .row label{font-size:12.5px}
+  .val{font-size:12.5px;color:var(--accent);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent2);margin-bottom:8px}
+  input[type=number]{width:74px;background:var(--panel2);color:var(--ink);
+    border:1px solid var(--line);border-radius:4px;padding:4px 7px}
+  .filebtn{display:block;width:100%;text-align:center;padding:8px;margin-bottom:7px;
+    background:var(--panel2);border:1px dashed var(--line);border-radius:5px;
+    cursor:pointer;font-size:12.5px}
+  .filebtn:hover{border-color:var(--accent2);color:var(--accent2)}
+  .filebtn input{display:none}
+  .meta{font-size:11.5px;color:var(--mute);line-height:1.7;font-variant-numeric:tabular-nums}
+  .meta b{color:var(--ink);font-weight:600}
+  .chk{display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:7px;cursor:pointer}
+  .chk input{accent-color:var(--accent2)}
+
+  #bar{height:14px;border-radius:3px;border:1px solid var(--line);margin-bottom:5px;
+    background:linear-gradient(90deg,#1b3a5c,#2e7d8f,#7fb069,#e8c468,#f2f2f2)}
+  #barLabels{display:flex;justify-content:space-between;font-size:11px;color:var(--mute);
+    font-variant-numeric:tabular-nums}
+
+  #view{position:relative;overflow:hidden}
+  #c{width:100%;height:100%;display:block;touch-action:none;outline:none}
+
+  #readout{position:absolute;left:14px;bottom:14px;background:rgba(9,20,29,.9);
+    border:1px solid var(--line);border-radius:6px;padding:10px 14px;font-size:13.5px;
+    max-width:420px;font-variant-numeric:tabular-nums}
+  #readout b{color:var(--accent)}
+  #readout .hint{color:var(--mute)}
+
+  #mini{position:absolute;right:14px;bottom:14px;width:172px;height:172px;
+    border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel2)}
+  #mini img{width:100%;height:100%;object-fit:cover;display:block;opacity:.92}
+  #dot{position:absolute;width:9px;height:9px;margin:-5px 0 0 -5px;border-radius:50%;
+    background:var(--accent);box-shadow:0 0 0 2px rgba(0,0,0,.55)}
+  #miniCap{position:absolute;top:0;left:0;right:0;padding:3px 6px;font-size:10px;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--mute);
+    background:linear-gradient(rgba(9,20,29,.85),transparent)}
+
+  #load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:10px;background:var(--bg);z-index:20;font-size:13px;color:var(--mute)}
+  #load.hide{display:none}
+  .spin{width:26px;height:26px;border:2px solid var(--line);border-top-color:var(--accent2);
+    border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+
+  #status{grid-column:1/3;display:flex;align-items:center;gap:20px;padding:0 14px;
+    background:var(--panel);border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--mute);font-variant-numeric:tabular-nums}
+  #status b{color:var(--ink);font-weight:600}
+  #status .sp{margin-left:auto}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="top">
+    <div id="brand">DEPTH<span>WIZARD</span></div>
+    <div id="sub">Team Meru · SIH26175 · ISRO</div>
+    <div id="modes">
+      <button class="mbtn on" id="bOrbit">Orbit</button>
+      <button class="mbtn" id="bFly">Fly · WASD</button>
+      <button class="mbtn" id="bReset">Reset view</button>
+    </div>
+  </div>
+
+  <aside id="side">
+    <div class="grp">
+      <h3>Scene</h3>
+      <label class="filebtn">Load elevation (.f32)
+        <input type="file" id="fDsm" accept=".f32,.bin,.raw"></label>
+      <label class="filebtn">Load imagery (.png / .jpg)
+        <input type="file" id="fRgb" accept="image/*"></label>
+      <div class="row" style="margin-top:10px">
+        <label for="gsd">Pixel size (m)</label>
+        <input type="number" id="gsd" value="1" min="0.05" step="0.05">
+      </div>
+      <div class="meta" id="meta"></div>
+    </div>
+
+    <div class="grp">
+      <h3>Display</h3>
+      <label class="chk"><input type="checkbox" id="cTex" checked> Satellite texture</label>
+      <label class="chk"><input type="checkbox" id="cHyp"> Colour by height</label>
+      <label class="chk"><input type="checkbox" id="cShadow" checked> Cast shadows</label>
+      <label class="chk"><input type="checkbox" id="cWire"> Wireframe</label>
+      <div class="row" style="margin-top:12px">
+        <label for="ex">Vertical exaggeration</label><span class="val" id="exVal">1.0×</span>
+      </div>
+      <input type="range" id="ex" min="1" max="5" step="0.1" value="1">
+      <div class="row">
+        <label for="relief">Wall shading</label><span class="val" id="reliefVal">70%</span>
+      </div>
+      <input type="range" id="relief" min="0" max="100" step="5" value="70">
+    </div>
+
+    <div class="grp">
+      <h3>Sun</h3>
+      <div class="row">
+        <label for="az">Azimuth</label><span class="val" id="azVal">315°</span>
+      </div>
+      <input type="range" id="az" min="0" max="359" step="1" value="315">
+      <div class="row">
+        <label for="el">Elevation</label><span class="val" id="elVal">42°</span>
+      </div>
+      <input type="range" id="el" min="8" max="85" step="1" value="42">
+      <div class="meta">Match these to the sun angle in the source image and the rendered
+        shadows will line up with the real ones.</div>
+    </div>
+
+    <div class="grp">
+      <h3>Elevation range</h3>
+      <div id="bar"></div>
+      <div id="barLabels"><span id="bMin">—</span><span id="bMax">—</span></div>
+    </div>
+
+    <div class="grp">
+      <h3>Measure</h3>
+      <div class="meta">Click the terrain in <b>Orbit</b> mode for height, slope and
+        distance from your previous point.</div>
+      <button class="mbtn" id="bClear" style="width:100%;margin-top:9px">Clear points</button>
+    </div>
+  </aside>
+
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div id="readout"><span class="hint">Click a rooftop to read its height.</span></div>
+    <div id="mini">
+      <img id="miniImg" alt="Scene overview">
+      <div id="miniCap">Overview</div>
+      <div id="dot"></div>
+    </div>
+    <div id="load"><div class="spin"></div><div>Building terrain…</div></div>
+  </div>
+
+  <div id="status">
+    <div>Extent <b id="sExtent">—</b></div>
+    <div>Grid <b id="sGrid">—</b></div>
+    <div>Camera altitude <b id="sAlt">—</b></div>
+    <div class="sp">Render <b id="sFps">—</b></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@7/babylon.js"></script>
+<script>
+/* ============================================================
+   DepthWizard viewer
+   heights: raw Float32, metres, square grid (N inferred as sqrt)
+   imagery: any resolution, must cover the SAME ground extent
+   ============================================================ */
+
+const canvas = document.getElementById('c');
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true });
+const scene  = new BABYLON.Scene(engine);
+const $ = id => document.getElementById(id);
+
+/* sky + haze — makes it feel like a place, not a floating object */
+scene.clearColor = new BABYLON.Color4(0.478, 0.604, 0.706, 1);
+scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
+scene.fogColor = new BABYLON.Color3(0.478, 0.604, 0.706);
+
+let N = 512, GSD = 1.0, exag = 1, relief = 0.70;
+let base, positions, uvs, indices, normals, colors;
+let hMin = 0, hMax = 1, mode = 'orbit';
+
+function syntheticHeights(n){
+  const a = new Float32Array(n*n);
+  for(let z=0; z<n; z++) for(let x=0; x<n; x++){
+    const u = x/n*8, v = z/n*8;
+    let h = 18*Math.sin(u)*Math.cos(v) + 6*Math.sin(u*3.1)*Math.sin(v*2.7);
+    if((x%97) < 26 && (z%89) < 22) h += 34;
+    a[z*n+x] = h + 40;
+  }
+  return a;
+}
+
+const RAMP = [[.106,.227,.361],[.180,.490,.561],[.498,.690,.412],[.910,.769,.408],[.949,.949,.949]];
+function ramp(t){
+  t = Math.max(0, Math.min(1, t)) * (RAMP.length - 1);
+  const i = Math.min(RAMP.length - 2, Math.floor(t)), f = t - i;
+  const a = RAMP[i], b = RAMP[i+1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+
+/* ---------- mesh ---------- */
+const ground = new BABYLON.Mesh('terrain', scene);
+const mat = new BABYLON.StandardMaterial('mat', scene);
+mat.specularColor = new BABYLON.Color3(0,0,0);
+mat.diffuseColor  = new BABYLON.Color3(1,1,1);
+mat.backFaceCulling = false;
+ground.material = mat;
+ground.receiveShadows = true;
+
+function computeNormals(){
+  BABYLON.VertexData.ComputeNormals(positions, indices, normals);
+  let sy = 0; for(let i=1;i<normals.length;i+=3) sy += normals[i];
+  if(sy < 0) for(let i=0;i<normals.length;i++) normals[i] = -normals[i];
+}
+
+/* vertex colours carry TWO jobs:
+   - hypsometric tint when "colour by height" is on
+   - a slope-darkening multiplier that makes walls read as walls,
+     applied over the satellite texture as well                     */
+function computeColors(){
+  hMin = Infinity; hMax = -Infinity;
+  for(let i=0;i<base.length;i++){
+    if(base[i] < hMin) hMin = base[i];
+    if(base[i] > hMax) hMax = base[i];
+  }
+  const span = (hMax - hMin) || 1;
+  const hyp = $('cHyp').checked;
+  for(let i=0;i<base.length;i++){
+    // steepness: 1 on flat ground, 0 on a vertical face
+    const ny = Math.abs(normals[i*3+1]);
+    const shade = (1 - relief) + relief * (0.30 + 0.70*ny);
+    const c = hyp ? ramp((base[i]-hMin)/span) : [1,1,1];
+    colors[i*4  ] = c[0]*shade;
+    colors[i*4+1] = c[1]*shade;
+    colors[i*4+2] = c[2]*shade;
+    colors[i*4+3] = 1;
+  }
+}
+
+function buildTerrain(){
+  positions = new Float32Array(N*N*3);
+  uvs       = new Float32Array(N*N*2);
+  colors    = new Float32Array(N*N*4);
+  normals   = new Float32Array(N*N*3);
+
+  for(let z=0; z<N; z++) for(let x=0; x<N; x++){
+    const i = z*N + x;
+    positions[i*3  ] = (x - N/2) * GSD;
+    positions[i*3+1] = base[i] * exag;
+    positions[i*3+2] = (z - N/2) * GSD;
+    uvs[i*2]   = x/(N-1);
+    uvs[i*2+1] = 1 - z/(N-1);
+  }
+  indices = new Uint32Array((N-1)*(N-1)*6);
+  let k = 0;
+  for(let z=0; z<N-1; z++) for(let x=0; x<N-1; x++){
+    const a = z*N+x, b = a+1, c = a+N, d = c+1;
+    indices[k++]=a; indices[k++]=c; indices[k++]=b;
+    indices[k++]=b; indices[k++]=c; indices[k++]=d;
+  }
+  computeNormals();
+  computeColors();
+
+  const vd = new BABYLON.VertexData();
+  vd.positions = positions; vd.indices = indices;
+  vd.uvs = uvs; vd.normals = normals; vd.colors = colors;
+  vd.applyToMesh(ground, true);
+
+  scene.fogStart = N*GSD*0.8;
+  scene.fogEnd   = N*GSD*2.6;
+  refreshUI(); frameCamera(); drawMinimap(); placeSun();
+}
+
+function reheight(){
+  for(let i=0;i<N*N;i++) positions[i*3+1] = base[i] * exag;
+  computeNormals(); computeColors();
+  ground.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+  ground.updateVerticesData(BABYLON.VertexBuffer.NormalKind, normals);
+  ground.updateVerticesData(BABYLON.VertexBuffer.ColorKind, colors);
+}
+function recolor(){
+  computeColors();
+  ground.updateVerticesData(BABYLON.VertexBuffer.ColorKind, colors);
+}
+
+/* ---------- light + shadows ---------- */
+const hemi = new BABYLON.HemisphericLight('h', new BABYLON.Vector3(0,1,0), scene);
+hemi.intensity = 0.55;
+hemi.diffuse = new BABYLON.Color3(0.78,0.86,0.95);
+hemi.groundColor = new BABYLON.Color3(0.22,0.21,0.19);
+
+const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-1,-1,-1), scene);
+sun.intensity = 1.5;
+sun.diffuse = new BABYLON.Color3(1, 0.96, 0.88);
+
+const shadows = new BABYLON.ShadowGenerator(2048, sun);
+shadows.usePercentageCloserFiltering = true;
+shadows.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+shadows.bias = 0.0012;
+shadows.normalBias = 0.02;
+shadows.getShadowMap().renderList.push(ground);
+
+function placeSun(){
+  const az = parseFloat($('az').value) * Math.PI/180;
+  const el = parseFloat($('el').value) * Math.PI/180;
+  const dir = new BABYLON.Vector3(
+    -Math.cos(el)*Math.sin(az), -Math.sin(el), -Math.cos(el)*Math.cos(az));
+  sun.direction = dir;
+  const span = N*GSD;
+  sun.position = dir.scale(-span*1.4);
+  sun.shadowMinZ = 1;
+  sun.shadowMaxZ = span*3.5;
+  sun.autoUpdateExtends = true;
+}
+
+/* ---------- cameras ---------- */
+const orbit = new BABYLON.ArcRotateCamera('orbit', -Math.PI/2, 1.05, 500,
+                  new BABYLON.Vector3(0,40,0), scene);
+orbit.wheelPrecision = 0.6;
+orbit.panningSensibility = 30;
+
+const fly = new BABYLON.UniversalCamera('fly', new BABYLON.Vector3(0,180,-240), scene);
+fly.angularSensibility = 3000; fly.minZ = 0.5;
+fly.keysUp.push(87);     fly.keysDown.push(83);
+fly.keysLeft.push(65);   fly.keysRight.push(68);
+fly.keysUpward.push(69); fly.keysDownward.push(81);
+
+function frameCamera(){
+  const span = N * GSD;
+  orbit.target.set(0, (hMin+hMax)/2 * exag, 0);
+  orbit.radius = span * 0.85;
+  orbit.alpha = -Math.PI/2; orbit.beta = 1.02;      // oblique — cities look best at ~35°
+  orbit.lowerRadiusLimit = span * 0.05;
+  orbit.upperRadiusLimit = span * 4;
+  orbit.maxZ = span * 8; fly.maxZ = span * 8;
+  fly.speed = span / 90;
+  fly.position.set(0, hMax*exag + span*0.22, -span*0.45);
+  fly.setTarget(new BABYLON.Vector3(0, hMin*exag, 0));
+}
+
+function setMode(m){
+  mode = m;
+  scene.activeCamera.detachControl();
+  scene.activeCamera = (m === 'orbit') ? orbit : fly;
+  scene.activeCamera.attachControl(canvas, true);
+  $('bOrbit').classList.toggle('on', m === 'orbit');
+  $('bFly').classList.toggle('on', m === 'fly');
+}
+scene.activeCamera = orbit; orbit.attachControl(canvas, true);
+$('bOrbit').onclick = () => setMode('orbit');
+$('bFly').onclick   = () => setMode('fly');
+$('bReset').onclick = () => { frameCamera(); setMode('orbit'); };
+
+/* ---------- measurement ---------- */
+const dotMat = new BABYLON.StandardMaterial('dm', scene);
+dotMat.emissiveColor = new BABYLON.Color3(1,.54,.24);
+dotMat.disableLighting = true;
+const marks = []; let prev = null;
+
+function clearMarks(){
+  marks.forEach(m => m.dispose()); marks.length = 0; prev = null;
+  $('readout').innerHTML = '<span class="hint">Click a rooftop to read its height.</span>';
+}
+$('bClear').onclick = clearMarks;
+
+scene.onPointerObservable.add(pi => {
+  if(pi.type !== BABYLON.PointerEventTypes.POINTERPICK || mode !== 'orbit') return;
+  const p = pi.pickInfo;
+  if(!p || !p.hit || p.pickedMesh !== ground) return;
+
+  const d = BABYLON.MeshBuilder.CreateSphere('mk', { diameter: N*GSD/140 }, scene);
+  d.material = dotMat; d.isPickable = false;
+  d.position.copyFrom(p.pickedPoint); marks.push(d);
+
+  const trueH = p.pickedPoint.y / exag;
+  const nrm   = p.getNormal(true);
+  const sEx   = Math.acos(Math.min(1, Math.abs(nrm.y)));
+  const slope = BABYLON.Tools.ToDegrees(Math.atan(Math.tan(sEx) / exag));
+
+  let t = `Height <b>${trueH.toFixed(1)} m</b> &nbsp;·&nbsp; slope <b>${slope.toFixed(0)}°</b>`;
+  if(prev){
+    const dist = BABYLON.Vector3.Distance(
+      new BABYLON.Vector3(prev.x, prev.y/exag, prev.z),
+      new BABYLON.Vector3(p.pickedPoint.x, trueH, p.pickedPoint.z));
+    t += ` &nbsp;·&nbsp; distance <b>${dist.toFixed(1)} m</b>`;
+  }
+  prev = p.pickedPoint.clone();
+  $('readout').innerHTML = t;
+});
+
+/* ---------- minimap ---------- */
+function drawMinimap(){
+  if(window._texUrl && $('cTex').checked){ $('miniImg').src = window._texUrl; return; }
+  const cv = document.createElement('canvas');
+  cv.width = N; cv.height = N;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(N, N);
+  const span = (hMax - hMin) || 1;
+  for(let i=0;i<N*N;i++){
+    const c = ramp((base[i]-hMin)/span);
+    img.data[i*4]=c[0]*255; img.data[i*4+1]=c[1]*255;
+    img.data[i*4+2]=c[2]*255; img.data[i*4+3]=255;
+  }
+  ctx.putImageData(img, 0, 0);
+  $('miniImg').src = cv.toDataURL();
+}
+
+/* ---------- UI ---------- */
+function refreshUI(){
+  const span = N*GSD;
+  $('meta').innerHTML =
+    `Grid <b>${N} × ${N}</b><br>Ground <b>${span.toFixed(0)} × ${span.toFixed(0)} m</b><br>` +
+    `Heights <b>${hMin.toFixed(1)} – ${hMax.toFixed(1)} m</b>`;
+  $('bMin').textContent = hMin.toFixed(1) + ' m';
+  $('bMax').textContent = hMax.toFixed(1) + ' m';
+  $('sExtent').textContent = `${span.toFixed(0)} × ${span.toFixed(0)} m`;
+  $('sGrid').textContent = `${N} × ${N} @ ${GSD} m/px`;
+}
+
+$('ex').oninput = e => {
+  exag = parseFloat(e.target.value);
+  $('exVal').textContent = exag.toFixed(1) + '×';
+  reheight();
+};
+$('relief').oninput = e => {
+  relief = parseFloat(e.target.value)/100;
+  $('reliefVal').textContent = e.target.value + '%';
+  recolor();
+};
+$('az').oninput = e => { $('azVal').textContent = e.target.value + '°'; placeSun(); };
+$('el').oninput = e => { $('elVal').textContent = e.target.value + '°'; placeSun(); };
+$('gsd').onchange = e => {
+  GSD = Math.max(0.05, parseFloat(e.target.value) || 1);
+  buildTerrain();
+};
+
+function syncMaterial(){
+  const tex = $('cTex').checked;
+  mat.diffuseTexture = (tex && window._tex) ? window._tex : null;
+  ground.useVertexColors = true;                       // wall shading always on
+  mat.diffuseColor = (tex && window._tex)
+      ? new BABYLON.Color3(1,1,1)
+      : ($('cHyp').checked ? new BABYLON.Color3(1,1,1) : new BABYLON.Color3(.62,.66,.69));
+  mat.wireframe = $('cWire').checked;
+  shadows.getShadowMap().renderList.length = 0;
+  if($('cShadow').checked) shadows.getShadowMap().renderList.push(ground);
+  ground.receiveShadows = $('cShadow').checked;
+  recolor(); drawMinimap();
+}
+$('cTex').onchange = $('cHyp').onchange = $('cWire').onchange =
+  $('cShadow').onchange = syncMaterial;
+
+/* ---------- files ---------- */
+function useTexture(url){
+  const t = new BABYLON.Texture(url, scene);
+  t.anisotropicFilteringLevel = 8;                     // sharp at grazing angles
+  t.onLoadObservable.addOnce(() => {
+    window._tex = t; window._texUrl = url;
+    $('cTex').checked = true; $('cHyp').checked = false;
+    syncMaterial();
+  });
+}
+
+$('fDsm').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  $('load').classList.remove('hide');
+  await new Promise(r => setTimeout(r, 30));
+  try{
+    const a = new Float32Array(await f.arrayBuffer());
+    const n = Math.round(Math.sqrt(a.length));
+    if(n*n !== a.length) throw new Error(`${a.length} values is not a square grid`);
+    base = a; N = n; buildTerrain(); clearMarks();
+  }catch(err){
+    alert('Could not read that elevation file.\n\n' + err.message +
+          '\n\nExpected raw float32 values, one per grid cell, square grid.');
+  }
+  $('load').classList.add('hide');
+};
+$('fRgb').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  useTexture(URL.createObjectURL(f));
+};
+
+/* ---------- boot ---------- */
+(async function boot(){
+  try{
+    const a = new Float32Array(await (await fetch('dsm.f32')).arrayBuffer());
+    const n = Math.round(Math.sqrt(a.length));
+    if(n*n !== a.length) throw new Error('not square');
+    base = a; N = n;
+  }catch(e){
+    console.warn('No dsm.f32 alongside the page — using synthetic terrain.');
+    N = 512; base = syntheticHeights(N);
+  }
+  buildTerrain();
+  useTexture('scene_rgb.png');     // silently ignored if absent
+  syncMaterial();
+  $('load').classList.add('hide');
+})();
+
+/* ---------- loop ---------- */
+let acc = 0;
+engine.runRenderLoop(() => {
+  scene.render();
+  if(++acc % 12 === 0){
+    const cam = scene.activeCamera;
+    $('sAlt').textContent = cam.position.y.toFixed(0) + ' m';
+    $('sFps').textContent = engine.getFps().toFixed(0) + ' fps';
+    const span = N*GSD;
+    const px = (cam.position.x + span/2) / span;
+    const pz = (cam.position.z + span/2) / span;
+    $('dot').style.left = Math.max(0,Math.min(1,px))*100 + '%';
+    $('dot').style.top  = Math.max(0,Math.min(1,pz))*100 + '%';
+  }
+});
+addEventListener('resize', () => engine.resize());
+</script>
+</body>
+</html>

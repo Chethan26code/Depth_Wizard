@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DepthWizard — Interactive Terrain Viewer</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div id="app">
+
+  <div id="top">
+    <div id="brand">DEPTH<span>WIZARD</span></div>
+    <div id="sub">Team Meru · SIH26175 · ISRO</div>
+    <div id="modes">
+      <button class="mbtn on" id="bOrbit">Orbit</button>
+      <button class="mbtn" id="bFly">Fly · WASD</button>
+      <button class="mbtn" id="bReset">Reset view</button>
+    </div>
+  </div>
+
+  <aside id="side">
+    <div class="grp">
+      <h3>Process a new image</h3>
+      <label class="filebtn">Upload satellite image (.tif / .png)
+        <input type="file" id="fProcess" accept=".tif,.tiff,.png,.jpg,.jpeg"></label>
+      <div class="meta" id="processStatus">Runs preprocessing → depth → calibration end-to-end.</div>
+    </div>
+
+    <div class="grp">
+      <h3>Or load finished output</h3>
+      <label class="filebtn">Heights (.tif / .f32)
+        <input type="file" id="fDsmDirect" accept=".tif,.tiff,.f32,.bin,.raw"></label>
+      <label class="filebtn">Imagery (.png / .jpg)
+        <input type="file" id="fRgbDirect" accept="image/*"></label>
+      <div class="row" id="rawDims" style="display:none">
+        <input type="number" id="rawWidth" placeholder="width (px)" style="width:48%">
+        <input type="number" id="rawHeight" placeholder="height (px)" style="width:48%">
+      </div>
+      <div class="row">
+        <label for="gsdDirect">Pixel size (m)</label>
+        <input type="number" id="gsdDirect" value="1" min="0.05" step="0.05">
+      </div>
+      <button class="mbtn" id="bLoadDirect" style="width:100%">Load</button>
+      <div class="meta" id="directStatus"></div>
+    </div>
+
+    <div class="grp">
+      <h3>Display</h3>
+      <label class="chk"><input type="checkbox" id="cTex" checked> Satellite texture</label>
+      <label class="chk"><input type="checkbox" id="cHyp"> Colour by height</label>
+      <label class="chk"><input type="checkbox" id="cStruct"> Highlight structures (heuristic)</label>
+      <label class="chk"><input type="checkbox" id="cShadow" checked> Cast shadows</label>
+      <label class="chk"><input type="checkbox" id="cWire"> Wireframe</label>
+      <div class="row" style="margin-top:12px">
+        <label for="ex">Vertical exaggeration</label><span class="val" id="exVal">1.0×</span>
+      </div>
+      <input type="range" id="ex" min="1" max="5" step="0.1" value="1">
+      <div class="row">
+        <label for="relief">Wall shading</label><span class="val" id="reliefVal">70%</span>
+      </div>
+      <input type="range" id="relief" min="0" max="100" step="5" value="70">
+    </div>
+
+    <div class="grp">
+      <h3>Sun</h3>
+      <div class="row"><label for="az">Azimuth</label><span class="val" id="azVal">315°</span></div>
+      <input type="range" id="az" min="0" max="359" step="1" value="315">
+      <div class="row"><label for="el">Elevation</label><span class="val" id="elVal">42°</span></div>
+      <input type="range" id="el" min="8" max="85" step="1" value="42">
+    </div>
+
+    <div class="grp">
+      <h3>Elevation range</h3>
+      <div id="bar"></div>
+      <div id="barLabels"><span id="bMin">—</span><span id="bMax">—</span></div>
+    </div>
+
+    <div class="grp">
+      <h3>Measure</h3>
+      <div class="meta">Click the terrain in <b>Orbit</b> mode for height, slope and distance.</div>
+      <button class="mbtn" id="bClear" style="width:100%;margin-top:9px">Clear points</button>
+    </div>
+  </aside>
+
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div id="readout"><span class="hint">Click a rooftop to read its height.</span></div>
+    <div id="mini">
+      <img id="miniImg" alt="Scene overview">
+      <div id="miniCap">Overview</div>
+      <div id="dot"></div>
+    </div>
+    <div id="load"><div class="spin"></div><div id="loadMsg">Building terrain…</div></div>
+  </div>
+
+  <div id="status">
+    <div>Extent <b id="sExtent">—</b></div>
+    <div>Grid <b id="sGrid">—</b></div>
+    <div>Camera altitude <b id="sAlt">—</b></div>
+    <div class="sp">Render <b id="sFps">—</b></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@7/babylon.js"></script>
+<script src="{{ url_for('static', filename='js/viewer.js') }}"></script>
+</body>
+</html>
