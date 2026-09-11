@@ -382,10 +382,18 @@
                     </select>
                 </div>
                 <label class="filebtn" style="border-style: solid; margin-bottom: 8px; font-size: 11.5px; padding: 6px;">
-                    📁 Or Upload Satellite Image
+                    📁 Or Upload Satellite Image (.tif / .png / .jpg)
                     <input type="file" id="fUploadInput" accept=".tif,.tiff,.png,.jpg,.jpeg">
                 </label>
                 <div id="uploadName" style="font-size: 11px; color: var(--mute); margin-bottom: 8px; display: none;"></div>
+                <div class="row" style="margin-bottom: 6px;">
+                    <label for="inScale" style="font-size: 11.5px;" title="Height scale in metres per unit of h. Auto-estimated or measure from shadow.">Scale (m/unit)</label>
+                    <input type="number" id="inScale" placeholder="Auto" step="1" min="1" max="200" style="width: 72px; padding: 3px 6px; font-size: 11.5px;">
+                </div>
+                <div class="row" style="margin-bottom: 8px;">
+                    <label for="inRadius" style="font-size: 11.5px;" title="Low-pass radius in pixels (approx 2x building width).">Radius (px)</label>
+                    <input type="number" id="inRadius" placeholder="Auto" step="5" min="5" max="200" style="width: 72px; padding: 3px 6px; font-size: 11.5px;">
+                </div>
                 <button id="bRunPipeline" class="mbtn" style="width: 100%; background: var(--accent); color: #07151f; font-weight: 700; border-color: var(--accent); padding: 9px 8px; font-size: 12.5px; cursor: pointer; border-radius: 5px;">
                     ⚡ Run ML Model &amp; Build 3D DSM
                 </button>
@@ -913,6 +921,13 @@
                     statusEl.textContent = '⏳ Processing ' + displayName + '...';
                 }
 
+                if ($('inScale') && $('inScale').value) {
+                    formData.append('scale', $('inScale').value);
+                }
+                if ($('inRadius') && $('inRadius').value) {
+                    formData.append('radius', $('inRadius').value);
+                }
+
                 const res = await fetch('/api/process', { method: 'POST', body: formData });
                 if (!res.ok) {
                     const err = await res.json();
@@ -954,6 +969,24 @@
 
         /* ---------- boot ---------- */
         (async function boot() {
+            // Load available samples dynamically
+            try {
+                const sRes = await fetch('/api/samples');
+                if (sRes.ok) {
+                    const sData = await sRes.json();
+                    if (sData.samples && sData.samples.length > 0) {
+                        const sel = $('sampleSelect');
+                        sel.innerHTML = '';
+                        sData.samples.forEach(s => {
+                            const opt = document.createElement('option');
+                            opt.value = s.path;
+                            opt.textContent = s.name;
+                            sel.appendChild(opt);
+                        });
+                    }
+                }
+            } catch (e) { }
+
             // Attempt to load already-calibrated DSM on boot
             try {
                 const checkRes = await fetch('/outputs/pipeline/test_area_calibrated_dsm.tif');
