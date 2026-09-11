@@ -1,11 +1,13 @@
 """
-M0 - Ingest & Preprocessing (no tiling version)
-Takes a raw image (GeoTIFF or PNG/JPG), detects type, reprojects to
-metric UTM if the source is in degrees, normalizes pixel values, and
-builds a valid-data mask. Outputs ONE array (not tiles) + metadata for
-Mohona/Chethan to run on directly.
+M0 - Preprocessing
+Takes a raw image (GeoTIFF or PNG/JPG) - either a file path (local
+testing) or raw bytes (from Maansi's app upload) - detects type,
+reprojects to metric UTM if needed, normalizes pixel values, builds a
+valid-data mask, and returns everything Chethan needs to run depth
+estimation. No tiling, no file writes required for the app path.
 """
 
+import io
 import json
 from pathlib import Path
 
@@ -14,20 +16,12 @@ from PIL import Image
 
 try:
     import rasterio
+    from rasterio.io import MemoryFile
     from rasterio.transform import Affine
     from rasterio.warp import calculate_default_transform, reproject, Resampling
     RASTERIO_AVAILABLE = True
 except ImportError:
     RASTERIO_AVAILABLE = False
-
-
-def is_geotiff(path: Path) -> bool:
-    if path.suffix.lower() not in (".tif", ".tiff"):
-        return False
-    if not RASTERIO_AVAILABLE:
-        raise RuntimeError("rasterio is required to read .tif files. Install with: pip install rasterio")
-    with rasterio.open(path) as src:
-        return src.crs is not None
 
 
 def utm_crs_for_lonlat(lon: float, lat: float) -> str:
@@ -43,13 +37,12 @@ def compute_gsd(transform, crs) -> dict:
     return {
         "gsd_x": gsd_x,
         "gsd_y": gsd_y,
-        "units": "degrees (NOT metres - not usable for calibration as-is)"
-                 if is_geographic else "metres",
+        "units": "degrees (NOT metres)" if is_geographic else "metres",
     }
 
 
 def percentile_stretch_to_uint8(array: np.ndarray, low_pct=2, high_pct=98) -> np.ndarray:
-    """Rescale to 0-255 using percentiles, so outlier pixels don't wash out contrast."""
+    """Rescale to 0-255 using percentiles so outlier pixels don't wash out contrast."""
     if array.dtype == np.uint8:
         return array
     stretched = np.zeros_like(array, dtype=np.float32)
@@ -64,8 +57,18 @@ def percentile_stretch_to_uint8(array: np.ndarray, low_pct=2, high_pct=98) -> np
     return stretched.astype(np.uint8)
 
 
-def load_geotiff(path: Path):
-    with rasterio.open(path) as src:
+def _is_geotiff(filename: str, has_crs_check) -> bool:
+    if not filename.lower().endswith((".tif", ".tiff")):
+        return False
+    if not RASTERIO_AVAILABLE:
+        raise RuntimeError("rasterio is required for .tif files. Install with: pip install rasterio")
+    return has_crs_check()
+
+
+def _process_geotiff(open_dataset):
+    """open_dataset is a context manager yielding a rasterio dataset - works
+    the same whether it came from a file path or an in-memory upload."""
+    with open_dataset() as src:
         nodata_value = src.nodata
 
         if src.crs.is_geographic:
@@ -123,8 +126,8 @@ def load_geotiff(path: Path):
     return array, valid_mask, meta
 
 
-def load_plain_image(path: Path):
-    img = Image.open(path).convert("RGB")
+def _process_plain_image(pil_image: Image.Image):
+    img = pil_image.convert("RGB")
     array = np.array(img)
 
     if array.dtype != np.uint8:
@@ -144,58 +147,97 @@ def load_plain_image(path: Path):
     return array, valid_mask, meta
 
 
-def process_image(input_path: str, output_dir: str):
-    """
-    Loads, preprocesses, and saves ONE array + mask + metadata - no tiling.
-    This is what gets handed to Mohona/Chethan directly.
-    """
-    input_path = Path(input_path)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+# ---------- Main entry point: use this from Maansi's app ----------
 
-    georeferenced = is_geotiff(input_path)
-    print(f"Processing {input_path.name} | georeferenced: {georeferenced}")
+def preprocess_image(file_bytes: bytes, filename: str) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    THE function Maansi's app calls. Give it the raw uploaded file's bytes
+    and its filename (used only to check extension). Returns:
+      - rgb_array: (H, W, 3) uint8 numpy array, ready for Chethan's model
+      - valid_mask: (H, W) bool numpy array, True = real data
+      - metadata: dict with georeferenced/crs/transform/gsd info for Mohona
 
-    if georeferenced:
-        array, valid_mask, meta = load_geotiff(input_path)
+    No files written to disk - everything stays in memory.
+    """
+    is_tif = filename.lower().endswith((".tif", ".tiff"))
+
+    if is_tif:
+        if not RASTERIO_AVAILABLE:
+            raise RuntimeError("rasterio is required for .tif files. Install with: pip install rasterio")
+
+        def open_dataset():
+            memfile = MemoryFile(file_bytes)
+            return memfile.open()
+
+        with MemoryFile(file_bytes) as memfile:
+            with memfile.open() as src:
+                georeferenced = src.crs is not None
+
+        if georeferenced:
+            array, valid_mask, meta = _process_geotiff(lambda: MemoryFile(file_bytes).open())
+        else:
+            # a .tif with no CRS - treat like a plain image
+            with MemoryFile(file_bytes) as memfile:
+                with memfile.open() as src:
+                    raw = np.transpose(src.read(), (1, 2, 0))
+                    if raw.shape[2] >= 3:
+                        raw = raw[:, :, :3]
+            pil_img = Image.fromarray(raw)
+            array, valid_mask, meta = _process_plain_image(pil_img)
     else:
-        array, valid_mask, meta = load_plain_image(input_path)
-
-    # Save the RGB array (as .npy, so exact pixel values are preserved -
-    # not re-compressed like a PNG would)
-    array_path = output_dir / "preprocessed_rgb.npy"
-    np.save(array_path, array)
-
-    mask_path = output_dir / "valid_mask.npy"
-    np.save(mask_path, valid_mask)
-
-    meta_path = output_dir / "metadata.json"
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
-
-    valid_fraction = float(valid_mask.mean())
-    print(f"  Array shape: {array.shape}, valid data: {valid_fraction:.1%}")
-    print(f"  -> {array_path}")
-    print(f"  -> {mask_path}")
-    print(f"  -> {meta_path}")
-
-    if valid_fraction < 0.9:
-        print(f"  NOTE: {(1 - valid_fraction):.1%} of the image is nodata/invalid - "
-              f"tell Mohona/Chethan to check the mask before running.")
+        pil_img = Image.open(io.BytesIO(file_bytes))
+        array, valid_mask, meta = _process_plain_image(pil_img)
 
     return array, valid_mask, meta
 
 
-from pathlib import Path
+# ---------- Local testing helpers (file-based, for you to run/debug) ----------
 
-# This always points to wherever this .py file physically lives,
-# regardless of what folder you ran `python` from.
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parent  # adjust .parent count based on your actual folder depth
+def preprocess_from_path(input_path: str, output_dir: str = None):
+    """
+    Local testing wrapper: reads a file from disk, runs preprocess_image,
+    optionally saves results to disk so you can inspect them.
+    """
+    input_path = Path(input_path)
+    with open(input_path, "rb") as f:
+        file_bytes = f.read()
 
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
-PREPROCESSED_DIR = PROJECT_ROOT / "data" / "preprocessed"
+    print(f"Processing {input_path.name}")
+    array, valid_mask, meta = preprocess_image(file_bytes, input_path.name)
+
+    valid_fraction = float(valid_mask.mean())
+    print(f"  Array shape: {array.shape}, dtype: {array.dtype}")
+    print(f"  Georeferenced: {meta['georeferenced']}")
+    if meta['georeferenced']:
+        print(f"  CRS: {meta['crs']}")
+        print(f"  GSD: {meta['gsd']}")
+    print(f"  Valid data: {valid_fraction:.1%}")
+
+    if valid_fraction < 0.9:
+        print(f"  NOTE: {(1 - valid_fraction):.1%} of the image is nodata/invalid.")
+
+    if output_dir:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        np.save(output_dir / "preprocessed_rgb.npy", array)
+        np.save(output_dir / "valid_mask.npy", valid_mask)
+        with open(output_dir / "metadata.json", "w") as f:
+            json.dump(meta, f, indent=2)
+        print(f"  Saved to {output_dir}/")
+
+    return array, valid_mask, meta
+
 
 if __name__ == "__main__":
-    process_image(RAW_DIR / "test_area.tif", PREPROCESSED_DIR / "test_area_tif")
-    process_image(RAW_DIR / "test_area.png", PREPROCESSED_DIR / "test_area_png")
+    # Paths are relative to THIS script's location, not wherever you run it from
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = SCRIPT_DIR.parent  # adjust if your folder depth differs
+
+    preprocess_from_path(
+        PROJECT_ROOT / "data" / "raw" / "TEST1US" / "test_area.tif",
+        PROJECT_ROOT / "data" / "preprocessed" / "test_area_tif",
+    )
+    preprocess_from_path(
+        PROJECT_ROOT / "data" / "raw" / "TEST1US" / "test_area.png",
+        PROJECT_ROOT / "data" / "preprocessed" / "test_area_png",
+    )
