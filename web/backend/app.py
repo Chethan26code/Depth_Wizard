@@ -120,16 +120,41 @@ def process_pipeline():
         # 2. Export RGB texture for Babylon.js draping
         export_rgb_png(input_file_path, output_png)
 
-        # 3. Run M1 Inference (or reuse if requested)
+        # 3. Run M1 Inference (or reuse existing .npy)
         reuse_npy = str(data.get("reuse_npy", "false")).lower() == "true"
-        if not (reuse_npy and output_npy.exists()):
-            run_m1_inference(
-                image_path=input_file_path,
-                checkpoint=PROJECT_ROOT / "outputs" / "checkpoints" / "m1_small_best.pt",
-                model_size="small",
-                gsd_m=1.0,
-                output_dir=OUTPUT_DIR,
-            )
+        m1_succeeded = False
+
+        if reuse_npy and output_npy.exists():
+            print(f"[API] Reusing existing .npy: {output_npy}")
+            m1_succeeded = True
+        elif output_npy.exists():
+            # Auto-reuse if .npy already exists (avoids torch import on blocked machines)
+            print(f"[API] Found existing .npy: {output_npy} — skipping M1 inference")
+            m1_succeeded = True
+        else:
+            try:
+                run_m1_inference(
+                    image_path=input_file_path,
+                    checkpoint=PROJECT_ROOT / "outputs" / "checkpoints" / "m1_small_best.pt",
+                    model_size="small",
+                    gsd_m=1.0,
+                    output_dir=OUTPUT_DIR,
+                )
+                m1_succeeded = True
+            except Exception as m1_err:
+                print(f"[API] M1 inference failed: {m1_err}")
+                # Check if there's a .npy from a previous run we can fall back to
+                if output_npy.exists():
+                    print(f"[API] Falling back to existing .npy: {output_npy}")
+                    m1_succeeded = True
+                else:
+                    return jsonify({
+                        "error": f"M1 inference failed and no pre-generated .npy found. "
+                                 f"PyTorch may be blocked on this machine. Error: {m1_err}"
+                    }), 500
+
+        if not output_npy.exists():
+            return jsonify({"error": "No relative height .npy file available."}), 500
 
         # Extract optional scale and radius parameters
         user_scale = None

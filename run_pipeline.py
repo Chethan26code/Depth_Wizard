@@ -421,15 +421,15 @@ def run_calibration(
     else:
         # Standard PNG, JPG, or unprojected TIFF without valid lat/lon
         print("[Calibration] Note: Image has no geographic coordinates (PNG/local raster).")
-        print("[Calibration] Applying relative-to-metric frequency-split elevation synthesis.")
+        print("[Calibration] Applying flat-ground + building-detail DSM synthesis.")
 
-        actual_scale = scale if scale is not None else 25.0
+        actual_scale = scale if scale is not None else 30.0
         print(f"[Calibration] Using metric scale: {actual_scale:.2f} m per unit")
 
+        # Extract only the high-frequency building/structure detail
         detail = h - lowpass(h, filter_r)
-        # Gentle ground baseline + building detail
-        ground_undulation = lowpass(h, filter_r * 2) * 5.0
-        dsm = ground_undulation + actual_scale * detail
+        # Flat ground + sharp building detail — no fake terrain undulation
+        dsm = actual_scale * detail
         # Offset so ground level starts around ~5m
         dsm = dsm - dsm.min() + 5.0
 

@@ -10,3 +10,8 @@ scipy
 tqdm
 safetensors
 huggingface_hub
+
+# Pipeline & Web Backend
+flask
+tifffile
+requests
