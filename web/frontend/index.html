@@ -425,9 +425,9 @@
                 <label class="chk"><input type="checkbox" id="cShadow" checked> Cast shadows</label>
                 <label class="chk"><input type="checkbox" id="cWire"> Wireframe</label>
                 <div class="row" style="margin-top:12px">
-                    <label for="ex">Vertical exaggeration</label><span class="val" id="exVal">1.0×</span>
+                    <label for="ex">Vertical exaggeration</label><span class="val" id="exVal">0.4×</span>
                 </div>
-                <input type="range" id="ex" min="1" max="5" step="0.1" value="1">
+                <input type="range" id="ex" min="0.1" max="3" step="0.05" value="0.4">
                 <div class="row">
                     <label for="relief">Wall shading</label><span class="val" id="reliefVal">70%</span>
                 </div>
@@ -501,7 +501,7 @@
         scene.fogColor = new BABYLON.Color3(0.478, 0.604, 0.706);
 
         /* grid is W (columns) x H (rows) — real GeoTIFFs are rarely square */
-        let W = 512, H = 512, GSD = 1.0, exag = 1, relief = 0.70;
+        let W = 512, H = 512, GSD = 1.0, exag = 0.4, relief = 0.70;
         let base, positions, uvs, indices, normals, colors;
         let hMin = 0, hMax = 1, mode = 'orbit';
 
@@ -583,8 +583,12 @@
                 const ny = Math.abs(normals[i * 3 + 1]);                 // 1 flat, 0 vertical
                 const shade = (1 - relief) + relief * (0.30 + 0.70 * ny);
                 const c = hyp ? ramp((base[i] - hMin) / range) : [1, 1, 1];
-                colors[i * 4] = c[0] * shade; colors[i * 4 + 1] = c[1] * shade;
-                colors[i * 4 + 2] = c[2] * shade; colors[i * 4 + 3] = 1;
+                // Soften steep building walls so pitch-black ground shadow textures don't turn them into black pillars
+                const wallBoost = (ny < 0.6) ? (0.6 - ny) * 0.35 : 0;
+                colors[i * 4] = Math.min(1.0, c[0] * shade + wallBoost);
+                colors[i * 4 + 1] = Math.min(1.0, c[1] * shade + wallBoost);
+                colors[i * 4 + 2] = Math.min(1.0, c[2] * shade + wallBoost);
+                colors[i * 4 + 3] = 1;
             }
         }
 
@@ -927,6 +931,7 @@
                 if ($('inRadius') && $('inRadius').value) {
                     formData.append('radius', $('inRadius').value);
                 }
+                formData.append('plateau', 'true');
 
                 const res = await fetch('/api/process', { method: 'POST', body: formData });
                 if (!res.ok) {

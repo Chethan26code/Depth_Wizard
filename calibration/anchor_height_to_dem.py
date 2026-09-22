@@ -53,7 +53,7 @@ from rasterio.warp import transform_bounds, reproject, Resampling
 from rasterio.transform import from_bounds
 
 # move this to an env var before the repo goes public
-OPENTOPO_API_KEY_DEFAULT = os.environ.get("OPENTOPO_API_KEY", "")
+OPENTOPO_API_KEY_DEFAULT = os.environ.get("OPENTOPO_API_KEY", "2abedde1f0675abe37066b9daded3e81")
 
 
 # ---------------------------------------------------------------------------

@@ -171,6 +171,7 @@ def process_pipeline():
                 pass
 
         # 4. Run DEM Calibration -> Produces Calibrated DSM GeoTIFF (metres)
+        plateau_param = str(data.get("plateau", "true")).lower() != "false"
         run_calibration(
             input_tif=input_file_path,
             relative_npy=output_npy,
@@ -178,6 +179,7 @@ def process_pipeline():
             output_dir=OUTPUT_DIR,
             scale=user_scale,
             radius=user_radius,
+            plateau=plateau_param,
         )
 
         # 5. Read metadata for UI

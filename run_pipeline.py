@@ -217,125 +217,86 @@ def write_geotiff(
 
 
 # ===================================================================
-#  STEP 2 — Frequency-Split Calibration (v2)
+#  STEP 2 — Frequency-Split Calibration (Mohana's Module Integration)
 # ===================================================================
 
-def _box_blur(a: np.ndarray, r: int) -> np.ndarray:
-    """Separable box blur of radius r, via cumulative sums. Edge-padded."""
-    if r < 1:
-        return a.astype(np.float64).copy()
-    a = a.astype(np.float64)
-    pad = np.pad(a, r, mode="edge")
-
-    c = np.cumsum(pad, axis=1)
-    c = np.concatenate([np.zeros((c.shape[0], 1)), c], axis=1)
-    out = (c[:, 2 * r + 1:] - c[:, :-(2 * r + 1)]) / (2 * r + 1)
-
-    c = np.cumsum(out, axis=0)
-    c = np.concatenate([np.zeros((1, c.shape[1])), c], axis=0)
-    out = (c[2 * r + 1:, :] - c[:-(2 * r + 1), :]) / (2 * r + 1)
-    return out
+from calibration.anchor_height_to_dem import (
+    read_geotiff_info,
+    bounds_to_latlon,
+    fetch_srtm_dem,
+    resample_dem_to_grid,
+    lowpass,
+    estimate_scale,
+    calibrate_dsm,
+    write_calibrated_dsm,
+    OPENTOPO_API_KEY_DEFAULT,
+)
 
 
-def lowpass(a: np.ndarray, radius: int, passes: int = 2) -> np.ndarray:
-    """Two box passes approximate a Gaussian filter."""
-    out = a
-    for _ in range(passes):
-        out = _box_blur(out, radius)
-    return out
-
-
-def estimate_scale(h: np.ndarray, dem: np.ndarray, radius: int) -> float:
-    """
-    Estimate scale (metres per unit of h) by regressing the SMOOTH part of h
-    against the SMOOTH part of the DEM.
-    """
-    hl = lowpass(h, radius)
-    dl = lowpass(dem, radius)
-
-    m = np.isfinite(hl) & np.isfinite(dl)
-    x, y = hl[m], dl[m]
-
-    if x.size < 100 or np.std(x) < 1e-9:
-        print("  [Scale] Notice: Not enough variance in smooth component; using default scale 25.0 m/unit.")
-        return 25.0
-
-    a = float(np.polyfit(x, y, 1)[0])
-    corr = float(np.corrcoef(x, y)[0, 1])
-    relief = float(dl.max() - dl.min())
-
-    print(f"  [Scale] Estimated scale : {a:.3f} m per unit of h")
-    print(f"  [Scale] Terrain corr    : {corr:+.3f}")
-    print(f"  [Scale] DEM relief      : {relief:.1f} m across the scene")
-
-    if abs(relief) < 15:
-        print("  [Scale] WARNING: Terrain is nearly flat, so automatic scale is constrained.")
-        print("          If buildings look flat, pass --scale (e.g. --scale 30.0).")
-
-    return abs(a) if abs(a) > 0.5 else 25.0
-
-
-def fetch_srtm_dem(
-    west: float, south: float, east: float, north: float,
-    out_path: Path,
-    api_key: str = "2abedde1f0675abe37066b9daded3e81"
-) -> Path:
-    """Download SRTM DEM from OpenTopography for the given bounds."""
-    import requests
-
-    print(f"[Calibration] Fetching SRTM DEM for bbox: W={west:.4f} S={south:.4f} E={east:.4f} N={north:.4f}")
-    url = "https://portal.opentopography.org/API/globaldem"
-    params = {
-        "demtype": "SRTMGL1",
-        "south": south, "north": north, "west": west, "east": east,
-        "outputFormat": "GTiff",
-        "API_Key": api_key,
-    }
-    resp = requests.get(url, params=params, stream=True, timeout=60)
-    resp.raise_for_status()
-    with open(out_path, "wb") as f:
-        for chunk in resp.iter_content(chunk_size=8192):
-            f.write(chunk)
-    print(f"[Calibration] SRTM DEM downloaded: {out_path}")
-    return out_path
-
-
-def read_dem_array(dem_path: Path) -> Tuple[np.ndarray, dict]:
-    """Read DEM GeoTIFF into numpy array using PIL (handles LZW) + geo metadata via tifffile."""
-    with Image.open(dem_path) as img:
-        data = np.array(img, dtype=np.float32)
-    geo = read_geotiff_geo(dem_path)
-    return data, geo
-
-
-def resample_dem_to_grid(
-    dem: np.ndarray,
-    dem_geo: dict,
-    target_geo: dict,
+def snap_building_plateaus(
+    detail: np.ndarray,
+    radius: int,
+    sharpness: float = 0.85,
+    min_area: int = 15,
 ) -> np.ndarray:
-    """Resample DEM to match target grid using bilinear interpolation."""
-    from scipy.ndimage import map_coordinates
+    """
+    Transforms curved, mountain-like building mounds into flat-topped
+    architectural plateaus with steep vertical step-edges (LOD1 block style).
 
-    tgt_h, tgt_w = target_geo["shape"]
+    1. Identifies elevated structure clusters above local ground level.
+    2. Segments individual building footprints via connected-component labeling.
+    3. Snaps each rooftop core to its median roof plateau elevation.
+    4. Morphologically sharpens the perimeter drop-off to the ground.
+    """
+    import scipy.ndimage as ndi
 
-    cols = np.arange(tgt_w)
-    rows = np.arange(tgt_h)
-    cc, rr = np.meshgrid(cols, rows)
+    pos_detail = np.maximum(detail, 0.0)
+    p99 = float(np.percentile(pos_detail, 99.5))
+    if p99 < 1e-4:
+        return detail
 
-    # Target pixel -> lon/lat
-    lon = target_geo["origin_x"] + cc * target_geo["scale_x"]
-    lat = target_geo["origin_y"] - rr * target_geo["scale_y"]
+    thresh = max(0.12 * p99, 0.05)
+    raw_mask = pos_detail > thresh
 
-    # lon/lat -> DEM pixel coords
-    dem_col = (lon - dem_geo["origin_x"]) / dem_geo["scale_x"]
-    dem_row = (dem_geo["origin_y"] - lat) / dem_geo["scale_y"]
+    # Morphological clean up of mask
+    cleaned_mask = ndi.binary_opening(raw_mask, structure=np.ones((3, 3)))
+    cleaned_mask = ndi.binary_fill_holes(cleaned_mask)
 
-    # Bilinear interpolation from DEM
-    resampled = map_coordinates(
-        dem, [dem_row, dem_col], order=1, mode="nearest"
-    ).astype(np.float32)
+    labels, num_features = ndi.label(cleaned_mask)
+    if num_features == 0:
+        return detail
 
-    return resampled
+    snapped = detail.copy()
+    erosion_iter = max(1, int(round(radius * 0.08)))
+
+    # Process each building cluster
+    for i in range(1, num_features + 1):
+        comp = (labels == i)
+        area = int(np.sum(comp))
+        if area < min_area:
+            continue
+
+        comp_vals = detail[comp]
+        # Rooftop plateau: median of the top 50% values in the building
+        median_val = np.median(comp_vals)
+        upper_vals = comp_vals[comp_vals >= median_val]
+        if upper_vals.size == 0:
+            continue
+        roof_level = float(np.median(upper_vals))
+
+        # Erode to isolate the flat core from the boundary ramp
+        core = ndi.binary_erosion(comp, iterations=erosion_iter)
+        if np.any(core):
+            snapped[core] = roof_level
+            # Sharpen the perimeter ramp toward the roof level
+            ramp = comp & ~core
+            snapped[ramp] = (1.0 - sharpness) * snapped[ramp] + sharpness * roof_level
+        else:
+            snapped[comp] = roof_level
+
+    # Light median filter to eliminate 1-pixel jagged step artifacts
+    snapped = ndi.median_filter(snapped, size=3)
+    return snapped
 
 
 def run_calibration(
@@ -345,14 +306,16 @@ def run_calibration(
     output_dir: Path = Path("outputs/pipeline"),
     scale: Optional[float] = None,
     radius: Optional[int] = None,
+    plateau: bool = True,
 ) -> Path:
     """
-    Calibrate relative height to metres using frequency-split anchor (v2):
-        terrain = lowpass(SRTM)
-        detail  = h - lowpass(h)
+    Calibrate relative height to metres using Mohana's Frequency-Split Calibration (v2):
+        terrain = lowpass(SRTM)       <- absolute elevation
+        detail  = h - lowpass(h)      <- buildings & structures
         dsm     = terrain + scale * detail
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_tif = Path(output_tif)
 
     # 1. Read geo-metadata from input image
     geo = read_geotiff_geo(input_tif)
@@ -374,22 +337,18 @@ def run_calibration(
     filter_r = radius if radius else max(3, int(round(60.0 / max(px_m, 1e-6))))
     print(f"[Calibration] Pixel resolution: ~{px_m:.2f}m -> Low-pass radius: {filter_r} px (~{filter_r * px_m:.0f}m cutoff)")
 
-    # 3. Check if we can fetch SRTM DEM (geographic bounding box exists)
+    # 3. Check if we can fetch real-world SRTM DEM (geographic GeoTIFF)
     if geo["is_geographic"]:
-        tgt_h, tgt_w = geo["shape"]
-        west = geo["origin_x"]
-        north = geo["origin_y"]
-        east = west + tgt_w * geo["scale_x"]
-        south = north - tgt_h * geo["scale_y"]
+        print("[Calibration] Delegating to Mohana's calibration engine (anchor_height_to_dem)...")
+        crs, bounds, transform, shape = read_geotiff_info(str(input_tif))
+        latlon_bounds = bounds_to_latlon(crs, bounds)
 
-        raw_dem_path = output_dir / f"{input_tif.stem}_srtm_tmp.tif"
-        fetch_srtm_dem(west, south, east, north, raw_dem_path)
+        raw_dem_path = str(output_dir / f"{input_tif.stem}_srtm_tmp.tif")
+        fetch_srtm_dem(latlon_bounds, OPENTOPO_API_KEY_DEFAULT, "SRTMGL1", raw_dem_path)
+        dem, dst_transform = resample_dem_to_grid(raw_dem_path, crs, bounds, shape)
+        dem = dem.astype(np.float64)
 
-        dem_raw, dem_geo = read_dem_array(raw_dem_path)
-        print(f"[Calibration] DEM shape={dem_raw.shape}, resampling to {geo['shape']}...")
-        dem = resample_dem_to_grid(dem_raw, dem_geo, geo).astype(np.float64)
-
-        # Clean nodata / sentinel values
+        # Clean sentinels
         bad = ~np.isfinite(dem) | (dem < -1e4) | (dem > 1e5)
         if bad.any():
             dem[bad] = np.nanmedian(dem[~bad])
@@ -400,19 +359,26 @@ def run_calibration(
             actual_scale = scale
             print(f"[Calibration] Using supplied scale: {actual_scale:.3f} m/unit")
         else:
-            actual_scale = estimate_scale(h, dem, filter_r)
+            try:
+                actual_scale = estimate_scale(h, dem, filter_r)
+                if abs(actual_scale) < 0.5:
+                    print("  [Scale] Notice: Estimated scale too small; defaulting to 25.0 m/unit.")
+                    actual_scale = 25.0
+            except Exception as e:
+                print(f"  [Scale] Fallback to default scale 25.0 m/unit due to: {e}")
+                actual_scale = 25.0
 
-        # Frequency split: absolute terrain from SRTM + detail from model
         terrain = lowpass(dem, filter_r)
         detail = h - lowpass(h, filter_r)
-        dsm = terrain + actual_scale * detail
+        if plateau:
+            print("[Calibration] Applying LOD1 Building Plateau Snapping & Edge Sharpening...")
+            detail = snap_building_plateaus(detail, filter_r)
 
-        print(f"[Calibration] SRTM Range   : {dem.min():.1f} to {dem.max():.1f} m (spread {dem.max() - dem.min():.1f} m)")
-        print(f"[Calibration] Calibrated DSM: {dsm.min():.1f} to {dsm.max():.1f} m (spread {dsm.max() - dsm.min():.1f} m)")
-        print(f"[Calibration] Building detail added: {float(actual_scale * (detail.max() - detail.min())):.1f} m")
+        dsm = terrain + actual_scale * detail
+        write_calibrated_dsm(dsm, crs, dst_transform, str(output_tif))
 
         # Cleanup temp DEM
-        if raw_dem_path.exists():
+        if os.path.exists(raw_dem_path):
             try:
                 os.remove(raw_dem_path)
             except OSError:
@@ -421,31 +387,34 @@ def run_calibration(
     else:
         # Standard PNG, JPG, or unprojected TIFF without valid lat/lon
         print("[Calibration] Note: Image has no geographic coordinates (PNG/local raster).")
-        print("[Calibration] Applying flat-ground + building-detail DSM synthesis.")
+        print("[Calibration] Applying flat-ground + building-detail DSM synthesis using Mohana's lowpass filter.")
 
-        actual_scale = scale if scale is not None else 30.0
+        # Proportional scale for drone / aerial scenes: 12.0m produces realistic 2-4 story buildings
+        actual_scale = scale if scale is not None else 12.0
         print(f"[Calibration] Using metric scale: {actual_scale:.2f} m per unit")
 
-        # Extract only the high-frequency building/structure detail
+        # Extract building/structure detail via Mohana's lowpass filter
         detail = h - lowpass(h, filter_r)
-        # Flat ground + sharp building detail — no fake terrain undulation
+        if plateau:
+            print("[Calibration] Applying LOD1 Building Plateau Snapping & Edge Sharpening...")
+            detail = snap_building_plateaus(detail, filter_r)
+
         dsm = actual_scale * detail
         # Offset so ground level starts around ~5m
         dsm = dsm - dsm.min() + 5.0
 
         print(f"[Calibration] Synthesized DSM Elevation Range: [{dsm.min():.1f}, {dsm.max():.1f}] m (spread: {dsm.max() - dsm.min():.1f} m)")
 
-    # 4. Write final calibrated DSM GeoTIFF
-    output_tif = Path(output_tif)
-    write_geotiff(
-        dsm.astype(np.float32),
-        output_tif,
-        origin_x=geo["origin_x"],
-        origin_y=geo["origin_y"],
-        scale_x=geo["scale_x"],
-        scale_y=geo["scale_y"],
-        epsg=geo["epsg"],
-    )
+        # Write GeoTIFF
+        write_geotiff(
+            dsm.astype(np.float32),
+            output_tif,
+            origin_x=geo["origin_x"],
+            origin_y=geo["origin_y"],
+            scale_x=geo["scale_x"],
+            scale_y=geo["scale_y"],
+            epsg=geo["epsg"],
+        )
 
     print(f"[Calibration] [SUCCESS] Calibrated DSM saved: {output_tif}")
     return output_tif
@@ -465,8 +434,10 @@ def main():
     parser.add_argument("--checkpoint", type=Path, default=Path("outputs/checkpoints/m1_small_best.pt"))
     parser.add_argument("--size", default="small", choices=["small", "base", "large"])
     parser.add_argument("--gsd", type=float, default=1.0)
-    parser.add_argument("--scale", type=float, default=None, help="Metres per unit of h (e.g. 30.0)")
+    parser.add_argument("--scale", type=float, default=None, help="Metres per unit of h (default: auto for geo, 12.0 for unprojected)")
     parser.add_argument("--radius", type=int, default=None, help="Low-pass radius in pixels (default ~60m cutoff)")
+    parser.add_argument("--plateau", action="store_true", default=True, help="Enable building roof plateau snapping and wall sharpening (default: True)")
+    parser.add_argument("--no-plateau", action="store_false", dest="plateau", help="Disable building roof plateau snapping")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/pipeline"))
     parser.add_argument("--output-tif", type=Path, default=None)
     args = parser.parse_args()
@@ -516,6 +487,7 @@ def main():
         output_dir=args.output_dir,
         scale=args.scale,
         radius=args.radius,
+        plateau=args.plateau,
     )
 
     print()
