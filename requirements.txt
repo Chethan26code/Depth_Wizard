@@ -10,3 +10,4 @@ scipy
 tqdm
 safetensors
 huggingface_hub
+rasterio
